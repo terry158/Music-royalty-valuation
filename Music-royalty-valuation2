@@ -1,0 +1,56 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# --- Calculation Engine ---
+def calculate_normalized_valuation(recurring_ltm, sync_ltm, decay, discount, years, exit_mult):
+    data = []
+    current_recurring = float(recurring_ltm)
+    total_npv = 0
+    
+    for year in range(1, years + 1):
+        current_recurring *= (1 - decay)
+        pv = current_recurring / ((1 + discount) ** year)
+        total_npv += pv
+        data.append({"Year": year, "Recurring CF": round(current_recurring, 2), "PV": round(pv, 2)})
+    
+    terminal_val = current_recurring * exit_mult
+    terminal_pv = terminal_val / ((1 + discount) ** years)
+    
+    # The 'Normalized' Formula: NPV of Recurring + Terminal Value + Current Sync Cash
+    total_valuation = total_npv + terminal_pv + sync_ltm
+    
+    return total_valuation, pd.DataFrame(data), terminal_pv
+
+# --- Streamlit UI ---
+st.set_page_config(page_title="Music Valuator Pro", layout="wide")
+st.title("🎵 Music Catalog Valuator: Normalized Edition")
+
+with st.sidebar:
+    st.header("1. Revenue Streams")
+    rec_ltm = st.number_input("Recurring LTM (Streaming/Radio)", value=40000)
+    sync_ltm = st.number_input("One-Time Sync Fees (Film/Ads)", value=10000)
+    
+    st.header("2. Assumptions")
+    decay = st.slider("Recurring Decay Rate (%)", 0, 40, 6) / 100
+    discount = st.slider("Discount Rate (%)", 5, 25, 12) / 100
+    exit_mult = st.number_input("Exit Multiple (on Recurring)", value=12.0)
+
+# Run Engine
+total_val, df, t_pv = calculate_normalized_valuation(rec_ltm, sync_ltm, decay, discount, 15, exit_mult)
+
+# Dashboard Metrics
+c1, c2, c3 = st.columns(3)
+c1.metric("Total Normalized Value", f"${total_val:,.2f}")
+c2.metric("Implied Total Multiple", f"{(total_val/(rec_ltm+sync_ltm)):.2f}x")
+c3.metric("Terminal Value (PV)", f"${t_pv:,.2f}")
+
+st.divider()
+
+# Charts
+st.subheader("15-Year Recurring Revenue Projection")
+fig = px.bar(df, x="Year", y="Recurring CF", color_discrete_sequence=["#1DB954"])
+st.plotly_chart(fig, use_container_width=True)
+
+st.write("---")
+st.caption("This model treats one-time sync fees as immediate cash value and does not apply a multiple to them, protecting you from overpaying for non-recurring revenue spikes.")
