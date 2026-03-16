@@ -1,0 +1,127 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from fpdf import FPDF
+import io
+
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Royalty Audit & Valuation Suite", layout="wide")
+
+# --- PDF GENERATION LOGIC ---
+class ValuationPDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'Music Asset Valuation & Audit Report', 0, 1, 'C')
+        self.ln(5)
+
+def create_pdf(artist, nps, valuation, multiple, audit_notes):
+    pdf = ValuationPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"Prepared for: {artist}", ln=True)
+    pdf.ln(5)
+    
+    # Financial Table
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(95, 10, "Metric", 1, 0, 'C', True)
+    pdf.cell(95, 10, "Value", 1, 1, 'C', True)
+    
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(95, 10, "Annual Net Publisher Share (NPS)", 1)
+    pdf.cell(95, 10, f"${nps:,.2f}", 1, 1)
+    pdf.cell(95, 10, "Valuation Multiple", 1)
+    pdf.cell(95, 10, f"{multiple}x", 1, 1)
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(95, 10, "Total Estimated Value", 1)
+    pdf.cell(95, 10, f"${valuation:,.2f}", 1, 1)
+    pdf.ln(10)
+    
+    # Audit Section
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "Audit Findings", ln=True)
+    pdf.set_font("Arial", '', 11)
+    for note in audit_notes:
+        pdf.multi_cell(0, 8, f"- {note}")
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- MAIN APP UI ---
+st.title("🎼 Composer Royalty Audit & Valuation Suite")
+st.markdown("---")
+
+# Sidebar for Setup
+st.sidebar.header("📂 Project Setup")
+artist_name = st.sidebar.text_input("Composer/Project Name", "New Project")
+target_multiple = st.sidebar.slider("Target Multiple", 5.0, 20.0, 12.5)
+commission_rate = st.sidebar.number_input("Commission %", 0.0, 10.0, 3.0)
+
+# Layout Columns
+col_data, col_results = st.columns([1, 2])
+
+with col_data:
+    st.subheader("Data Upload")
+    royalty_file = st.file_uploader("Upload Royalty CSV (Date, Amount, Work_Title, Territory)", type="csv")
+    cuesheet_file = st.file_uploader("Upload Cue Sheet CSV (Work_Title)", type="csv")
+
+if royalty_file:
+    df = pd.read_csv(royalty_file)
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # Financial Math
+    total_nps = df['Amount'].sum()
+    est_valuation = total_nps * target_multiple
+    broker_fee = est_valuation * (commission_rate / 100)
+    
+    with col_results:
+        # Metrics Row
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Annual NPS", f"${total_nps:,.2f}")
+        m2.metric("Valuation", f"${est_valuation:,.2f}")
+        m3.metric("Your Commission", f"${broker_fee:,.2f}")
+        
+        # Charts
+        st.subheader("Historical Performance")
+        chart_data = df.resample('M', on='Date')['Amount'].sum()
+        st.area_chart(chart_data)
+        
+        # --- AUDIT LOGIC ---
+        st.subheader("🔍 Audit Analysis")
+        audit_notes = []
+        
+        # Gap Detection
+        zero_months = (chart_data == 0).sum()
+        if zero_months > 0:
+            note = f"Alert: {zero_months} months with $0 revenue. Potential missing cue sheets."
+            st.error(note)
+            audit_notes.append(note)
+        else:
+            st.success("✅ Revenue flow is consistent.")
+        
+        # Cue Sheet Reconciliation
+        if cuesheet_file:
+            cue_df = pd.read_csv(cuesheet_file)
+            registered_cues = set(cue_df['Work_Title'].unique())
+            paid_cues = set(df['Work_Title'].unique())
+            unpaid = registered_cues - paid_cues
+            
+            if unpaid:
+                note = f"Unpaid Cues: {len(unpaid)} works on cue sheets have zero earnings history."
+                st.warning(note)
+                audit_notes.append(note)
+                with st.expander("Show Unpaid Works"):
+                    st.write(list(unpaid))
+            else:
+                st.success("✅ All registered cues are currently generating revenue.")
+        
+        # Sensitivity Table
+        st.subheader("Market Sensitivity")
+        s_multiples = [target_multiple - 2, target_multiple, target_multiple + 2, target_multiple + 5]
+        s_data = [{"Multiple": f"{m}x", "Value": f"${total_nps*m:,.2f}"} for m in s_multiples]
+        st.table(pd.DataFrame(s_data))
+
+        # PDF Download
+        st.markdown("---")
+        if st.button("Generate Valuation Report"):
+            pdf_out = create_pdf(artist_name, total_nps, est_valuation, target_multiple, audit_notes)
+            st.download_button("📩 Download PDF", data=pdf_out, file_name=f"{artist_name}_Valuation.pdf")
