@@ -1,0 +1,83 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+
+st.set_page_config(page_title="Composer Audit & Valuation", layout="wide")
+
+# --- CORE AUDIT LOGIC ---
+def run_audit(df):
+    results = {}
+    # 1. Detect "Zero Months" - Potential missing cue sheets
+    monthly_rev = df.resample('M', on='Date')['Amount'].sum()
+    zero_months = monthly_rev[monthly_rev == 0].count()
+    results['zero_months'] = zero_months
+    
+    # 2. International vs Domestic Split
+    if 'Territory' in df.columns:
+        intl_rev = df[df['Territory'] != 'USA']['Amount'].sum()
+        results['intl_ratio'] = (intl_rev / df['Amount'].sum()) * 100
+    else:
+        results['intl_ratio'] = 0.0
+        
+    # 3. Predict "Hidden" International Upside
+    # Industry standard: International should be 30-50% of total for global content
+    if results['intl_ratio'] < 25:
+        results['upside'] = df['Amount'].sum() * 0.15 # Est. 15% hidden value
+    else:
+        results['upside'] = 0
+        
+    return results
+
+# --- APP INTERFACE ---
+st.title("🎼 Composer Portfolio Audit & Valuation")
+
+col_a, col_b = st.columns([1, 3])
+
+with col_a:
+    st.header("Parameters")
+    artist = st.text_input("Composer Name", "John Doe")
+    multiple = st.slider("Target Multiple", 8.0, 20.0, 13.5)
+    intl_audit = st.checkbox("Run International Gap Analysis", value=True)
+
+with col_b:
+    uploaded_file = st.file_uploader("Upload Granular Royalty CSV", type="csv")
+
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        df['Date'] = pd.to_datetime(df['Date'])
+        
+        # Run the Audit
+        audit_results = run_audit(df)
+        
+        # Financials
+        nps = df['Amount'].sum()
+        hidden_money = audit_results['upside'] if intl_audit else 0
+        adjusted_nps = nps + hidden_money
+        valuation = adjusted_nps * multiple
+        
+        # Display Metrics
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Current Annual NPS", f"${nps:,.2f}")
+        m2.metric("Audit-Adjusted NPS", f"${adjusted_nps:,.2f}", f"+${hidden_money:,.0f} Hidden")
+        m3.metric("Projected Sale Price", f"${valuation:,.2f}")
+
+        # --- AUDIT DASHBOARD ---
+        st.subheader("🔍 Audit Findings")
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.write("**Data Integrity**")
+            if audit_results['zero_months'] > 0:
+                st.error(f"⚠️ {audit_results['zero_months']} months found with $0 revenue. Possible missing cue sheets.")
+            else:
+                st.success("✅ Consistent revenue flow detected.")
+                
+        with c2:
+            st.write("**International Performance**")
+            st.progress(audit_results['intl_ratio'] / 100)
+            st.caption(f"International is {audit_results['intl_ratio']:.1f}% of total revenue.")
+            if audit_results['intl_ratio'] < 25:
+                st.warning("Potential 'Black Box' underpayment detected in foreign territories.")
+
+        # Line Chart
+        st.line_chart(df.set_index('Date')['Amount'])
